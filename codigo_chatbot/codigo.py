@@ -1,11 +1,10 @@
 import unicodedata
-
 # Con "Path" se puede trabar con rutas de archivos y carpetas
 from pathlib import Path 
 
 import pandas as pd # Sirve para trabajar con tablas de datos
 
-# Averigua en que carpeta esta el archivo "codigo.py" y la guarda en la variable "CARPETA".
+# Averigua en qué carpeta está el archivo "codigo.py" y la guarda en la variable "CARPETA"
 CARPETA = Path(__file__).resolve().parent
 
 # Ruta CSV
@@ -44,18 +43,31 @@ def entrada(texto):
 
 CLASES = {
     "distrito" : "distrito",
+    "zona" : "distrito",                  # NUEVO: sinonimo
     "negocio" : "tipo_negocio",
     "operacion" : "tipo_operacion",
+    "pago" : "tipo_operacion",            # NUEVO: sinonimo
     "hora" : "hora",
     "fecha" : "fecha",
     "dispositivo" : "dispositivo_nuevo"
 }
 
+# AHORA cada medida guarda 3 datos: (columna, calculo, nombre para mostrar)
+# OJO AL ORDEN: gana la PRIMERA coincidencia. Por eso "tasa" va antes que "fraude"
+# y "maximo" / "minimo" van antes que "monto".
 MEDIDA = {
-    "fraude" : ("es_fraude", "sum"),
-    "monto" : ("monto_soles", "mean"),
-    "antiguedad" : ("antiguedad_cuenta_dias", "mean")
-    }
+    "tasa" : ("es_fraude", "mean", "Tasa de fraude (%)"),             # NUEVO
+    "porcentaje" : ("es_fraude", "mean", "Tasa de fraude (%)"),       # NUEVO
+    "fraude" : ("es_fraude", "sum", "Total de fraudes"),
+    "estafa" : ("es_fraude", "sum", "Total de fraudes"),              # NUEVO: sinonimo
+    "cuant" : ("id_transaccion", "count", "Cantidad de operaciones"), # NUEVO: cuantas / cuantos
+    "transaccion" : ("id_transaccion", "count", "Cantidad de operaciones"), # NUEVO
+    "maximo" : ("monto_soles", "max", "Monto maximo (S/)"),           # NUEVO
+    "minimo" : ("monto_soles", "min", "Monto minimo (S/)"),           # NUEVO
+    "monto" : ("monto_soles", "mean", "Monto promedio (S/)"),
+    "dinero" : ("monto_soles", "mean", "Monto promedio (S/)"),        # NUEVO: sinonimo
+    "antiguedad" : ("antiguedad_cuenta_dias", "mean", "Antiguedad promedio (dias)")
+}
 
 # print(MEDIDA["fraude"])
 
@@ -68,58 +80,65 @@ def busqueda(texto, diccionario):
             return valor
     return None
 
+# NUEVO: comando "ayuda" que muestra las clases que conoce el bot y ejemplos
+def ayuda():
+    clases = ", ".join(CLASES.keys()) # ---> "join" pega todas las claves separadas por coma
+    return (
+        f"Puedes agrupar por: {clases}\n"
+        "Ejemplos:\n"
+        "  - fraudes por distrito\n"
+        "  - tasa de fraude por dispositivo\n"
+        "  - cuantas operaciones por negocio\n"
+        "  - monto maximo por distrito\n"
+        "  - fraudes (solo la medida, da el total)\n"
+        "  - fraudes por hora menos (con 'menos' ordena de menor a mayor)"
+    )
 
-# Como se llama cada calculo cuando lo mostramos
-NOMBRE_CALCULO = {
-    "sum" : "Total",
-    "mean" : "Promedio"
-}
-
-# Como se llama cada columna medida cuando la mostramos
-NOMBRE_MEDIDA = {
-    "es_fraude" : "fraudes",
-    "monto_soles" : "monto (S/)",
-    "antiguedad_cuenta_dias" : "antiguedad (dias)"
-}
-
-def respuesta(pregunta):    
+def respuesta(pregunta):
     texto = entrada(pregunta)
+
+    # NUEVO: comando especial
+    if texto == "ayuda":
+        return ayuda()
+
     columna = busqueda(texto, CLASES)
     medida = busqueda(texto, MEDIDA)
-    
-    # Si no se detecta bien lo que se solicita entonces sugerir algo.
-    
-    if medida is None:
-        return "No entendi, prueba con: fraudes por distrito"
 
-    col_medida, calculo = medida
-    nombre_calculo = NOMBRE_CALCULO[calculo]
-    nombre_medida = NOMBRE_MEDIDA[col_medida]
+    # NUEVO: si solo pidio la clase (ej. "distritos"), asumimos que quiere fraudes
+    if medida is None and columna is not None:
+        medida = MEDIDA["fraude"]
+
+    # Si no se encontro QUE medir, solicitamos un nuevo ingreso.
+    if medida is None:
+        return "No entendi. Escribe 'ayuda' para ver ejemplos."
+
+    col_medida, calculo, nombre_medida = medida
+
+    # La tasa de fraude es un promedio de 0 y 1 (ej. 0.05), asi que la pasamos a porcentaje
+    factor = 1
+    if col_medida == "es_fraude" and calculo == "mean":
+        factor = 100
 
     # NUEVO: si solo pidio la medida (ej. "fraudes"), damos el valor de toda la tabla
     if columna is None:
-        valor = round(df_limpio[col_medida].agg(calculo), 2)
-        return f"{nombre_calculo} de {nombre_medida}: {valor}"
+        valor = round(df_limpio[col_medida].agg(calculo) * factor, 2)
+        return f"{nombre_medida}: {valor}"
 
     # Si la pregunta trae "menos", ordenamos de menor a mayor
     de_menor_a_mayor = "menos" in texto
 
-    resultado = (
-        df_limpio.groupby(columna)[col_medida]
-        .agg(calculo)
-        .sort_values(ascending = de_menor_a_mayor)
-        .round(2)
-    )
+    resultado = df_limpio.groupby(columna)[col_medida].agg(calculo) * factor
+    resultado = resultado.sort_values(ascending = de_menor_a_mayor).round(2)
 
-# NUEVO: armamos la lista completa, una linea por cada elemento
+    # Armamos la lista completa, una linea por cada elemento
     lista = ""
     for nombre, valor in resultado.items():
         lista += f"  {nombre}: {valor}\n"
 
     nombre_clase = columna.replace("_", " ")
     orden = "de menor a mayor" if de_menor_a_mayor else "de mayor a menor"
-    return f"{nombre_calculo} de {nombre_medida} por {nombre_clase} ({orden}):\n{lista}"
-        
+    return f"{nombre_medida} por {nombre_clase} ({orden}):\n{lista}"
+
 pregunta = entrada("¿Que distrito tiene mas fraudes?") # Esto hace que el texto quede limpio
 #pregunta = entrada("A?")
 # print(pregunta)
@@ -151,8 +170,5 @@ if __name__ == "__main__":
         if entrada(pregunta) == "salir":
             break
         print(respuesta(pregunta), "\n")
-        
-
-
 
 
